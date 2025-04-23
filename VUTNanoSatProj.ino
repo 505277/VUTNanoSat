@@ -1,8 +1,12 @@
-//----------------------------------------------------------
-//Po 20 sekundách od spustenia, zhavič na D3 otvorí antenu a po 5 s od otvorenuia začne vysielať správu Morse: "VUT/NANO/RFM69HW" celkom 10-krát.
-//Morseov kód je vysielaný pomocou funkcií, ktoré mapujú jednotlivé znaky na bodky a čiarky a odosielajú ich cez rádio, správa sa da jednodučsie meniť. 
-//Okrem toho kód monitoruje prichádzajúce rádiové správy, a ak prijme "ON" alebo "OFF", upraví stav vnútornej LED.
-//...........................................................
+//---------------------------------------------------------- Priebeh Info (start)
+//Po spustení esp8266, sa čaká kedy PulUp tlačidlo "#define SAT_DEP D2" sa uvolní (stav = HIGH) a tým sa spustí loop programs.
+//Anténa sa zacne zhaviť po "int DelayAntDep" (2 sek) od Sat_Dep uvolnení tlačidla, na pine "#define Zhav_DEP D3 ". ň
+//Keď sa anténa otvorí == "#define ANT_DEP D1" tlacidlo prejde do stave High (PulUp), tak sa spustí "bool LockA" inner bit, aby zabránil inf spstaniu.
+//Po otvorení antény sa čaká "int DelayTxStart" (2 sek), kým začne vysielanie úvodnej správy "const char* UvodnaSprava" ("VUT/NANO/RFM69HW"), 
+// a to presne "int NumVysMax" krát (10x). Po prekročení "int NumVysMax", zopne sa "bool LockB" a tým sa skončí úvodné vysielanie.
+// Nasledne sa po zopnutí "bool LockB" zapne RxTx comunikácia, ktorá len zapína a vypína vnútornú Led.
+//........................................................... Priebeh Info (end)
+
 #include <SPI.h>
 #include <RH_RF69.h>
 
@@ -23,14 +27,26 @@ RH_RF69 rf69(RFM69_CS, RFM69_INT);
   #define LED_BUILTIN D4
 #endif
 
-// Antena otvorenie, ktorá sa aktivuje 20 s po štarte
-#define LED_D3 D3
+// Pini pre 2 senzor. tlacidla (Ant/Sat dep) a pre Zhavenie na ant Dep.
+#define ANT_DEP D1 // Vystup, Senzor ci je antena Otvr.
+#define SAT_DEP D2 // Výstup, Senzor ci je Sat. Von vo vesmíre.
+#define Zhav_DEP D3 // Vstup, Zhavenie na otvr. Anteny
+
+//Dig. Bity a časovače a Spravy
+unsigned long StartTime;
+bool LockA = false; // Zamiká nekonečné vypínanie zhavenia
+bool LockB = false; // Uzamiká a ukončuje úvodne vysielanie po NumVysMax 
+int NumVys = 0; // Kolko krát sa už vyslala úvodná správa
+
+ //------------------------------ ----------- Lubovolné nadstavenie (Start) ---------------- ------------------------------
+int DelayAntDep = 2000; // v ms, určuje ze za 2 sek sa antena zacne zhavit, po SatDep
+int DelayTxStart = 2000; // v ms, určuje ze za 2 sek sa zacne vysielat (uvodna sprava) po skonceni zhavenia
+const char* UvodnaSprava = "VUT/NANO/RFM69HW"; // Úvodná sprava, vysiela sa NumVysx
+int NumVysMax = 10; // Kolko krát sa vysle úvodná správa
+// ------------------------------ ----------- Lubovolné nadstavenie (end)   ----------------- -----------------------------
 
 // Dĺžka trvania bodky v ms
 #define DOT_DURATION 200
-
-// Počet odoslaných Morse správ
-int transmissions = 0;
 
 // ------------------------------
 // Morseov kód – tabuľka pre mapovanie znakov
@@ -122,8 +138,13 @@ void setup() {
 
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH); // LED vnutorna je off (aktívna LOW)
-  pinMode(LED_D3, OUTPUT); // pre antenu otvorenie
-  digitalWrite(LED_D3, LOW);
+
+  pinMode(Zhav_DEP, OUTPUT); // pre antenu Otvorenie/Zhavenie
+  digitalWrite(Zhav_DEP, LOW); // PulDown mod LOW = 0V
+
+  pinMode(ANT_DEP, INPUT); // Tlacidlo, je ant. otvorena? PulIp
+  pinMode(SAT_DEP, INPUT); // Tlacidlo, je sat. vypustení? PulUp
+
   
   // Reset RFM69 
   pinMode(RFM69_RST, OUTPUT);
@@ -143,51 +164,66 @@ void setup() {
   }
   rf69.setTxPower(14, true);
   Serial.println("RFM69 OK");
+
+  StartTime = millis();
 }
 
 void loop() {
-  unsigned long currentTime = millis();
 
-  // ------------------------------
-  // 1. LED_D3: Zapni 20 s po štarte
-  // ------------------------------
-  if (currentTime > 20000 && digitalRead(LED_D3) == LOW) {
-    digitalWrite(LED_D3, HIGH);
-    Serial.println("LED_D3 ON");
-  }
-  
-  // ------------------------------
-  // 2. Morse správa: "VUT/NANO/RFM69HW", vyslať 10x, začať po 25 s
-  // ------------------------------
-  if (currentTime > 25000 && transmissions < 10) {
-    Serial.print("Morse: VUT/NANO/RFM69HW - ");
-    Serial.print(transmissions + 1);
-    Serial.println();
-    sendMorseMessage("VUT/NANO/RFM69HW"); // Tu sa da meniť počiatočná správa -----------------*****--------------
-    transmissions++;
-    delay(1000);
-  }
-  
-  // ------------------------------
-  // 3. Rádio príjem:
-  // Ak príde správa "ON" alebo "OFF", ON/OFF LED (LED_BUILTIN)
-  // ------------------------------
-  if (rf69.available()) {
-    uint8_t buf[RH_RF69_MAX_MESSAGE_LEN];
-    uint8_t len = sizeof(buf);
-    if (rf69.recv(buf, &len)) {
-      buf[len] = 0;
-      Serial.print("Prijaté: ");
-      Serial.println((char*)buf);
-      String msg = String((char*)buf);
-      msg.trim();
-      if (msg.equalsIgnoreCase("ON")) {
-        digitalWrite(LED_BUILTIN, LOW);  // Zapni LED (aktívna LOW)
-        Serial.println("LED_BUILTIN ON");
-      } else if (msg.equalsIgnoreCase("OFF")) {
-        digitalWrite(LED_BUILTIN, HIGH); // Vypni LED
-        Serial.println("LED_BUILTIN OFF");
+  if (digitalRead(SAT_DEP) == HIGH) { // Loop code sa spustí po uvolnení tlačidla Sat_Dep, to je keď bude HIGH, lebo PulUp mod
+      unsigned long currentTime = millis() - StartTime; // loop time, po SatDep
+
+      // --------------------------------------------------------
+      // 1. ANT_DEP: Zhav 2s po SatDeploy aby sa otvorila antena
+      // --------------------------------------------------------
+      if (currentTime > DelayAntDep && digitalRead(ANT_DEP) == LOW) { // Otvranie anteny, keď je Ant_Dep tlac. stlacené (PulUp mod)
+        digitalWrite(Zhav_DEP, HIGH);
+        Serial.println("Zhav_DEP ON");
       }
-    }
+
+      if (digitalRead(ANT_DEP) == HIGH and LockA == false) { // Po otvorení anteny, potvrdenie keď tlacidlo ANT_DEP prejde na HIGH
+        digitalWrite(Zhav_DEP, LOW);
+        LockA = true; // LockA = Aby sa spustila len raz táto funkcia
+        StartTime = millis(); // Resetuj StartTime, aby sa vysielať začalo DelayTxStart (sek) po skončení zhavenia, bod 2. Morse Správa
+        Serial.println("Zhav_DEP OFF"); 
+      }
+      // ------------------------------
+      // 2. Morse správa: "UvodnaSprava", vyslať NumVysx, DelayTxStart (sek), po tom ako sa skončí zhavenie => LockA== true
+      // ------------------------------
+      if (LockA == true && currentTime > DelayTxStart && LockB == false) {
+
+        if (currentTime - DelayTxStart >= NumVys*1000){ // Opakuj každú sekundu
+        Serial.print("Morse: " + String(UvodnaSprava));
+        Serial.print(NumVys + 1);
+        Serial.println();
+        sendMorseMessage(UvodnaSprava); 
+        NumVys++;
+        }
+      }else if(NumVys > NumVysMax && LockB == false){
+        LockB = true;
+       }
+      
+      // ------------------------------
+      // 3. Rádio príjem:
+      // Ak príde správa "ON" alebo "OFF", ON/OFF LED (LED_BUILTIN), 
+      // ------------------------------
+      if (rf69.available() && LockB == true) {
+        uint8_t buf[RH_RF69_MAX_MESSAGE_LEN];
+        uint8_t len = sizeof(buf);
+        if (rf69.recv(buf, &len)) {
+          buf[len] = 0;
+          Serial.print("Prijaté: ");
+          Serial.println((char*)buf);
+          String msg = String((char*)buf);
+          msg.trim();
+          if (msg.equalsIgnoreCase("ON")) {
+            digitalWrite(LED_BUILTIN, LOW);  // Zapni LED (aktívna LOW)
+            Serial.println("LED_BUILTIN ON");
+          } else if (msg.equalsIgnoreCase("OFF")) {
+            digitalWrite(LED_BUILTIN, HIGH); // Vypni LED
+            Serial.println("LED_BUILTIN OFF");
+          }
+        }
+      }
   }
 }
