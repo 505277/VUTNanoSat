@@ -1,3 +1,5 @@
+#include <RadioHead.h>
+
 //---------------------------------------------------------- Priebeh Info (start)
 //Po spustení esp8266, sa čaká kedy PulUp tlačidlo "#define SAT_DEP D2" sa uvolní (stav = HIGH) a tým sa spustí loop programs.
 //Anténa sa zacne zhaviť po "int DelayAntDep" (2 sek) od Sat_Dep uvolnení tlačidla, na pine "#define Zhav_DEP D3 ". ň
@@ -16,7 +18,7 @@
 #define RFM69_RST     D0
 
 // Základné nastavenia rfm69
-#define NODEID        1     
+#define NODEID        1     c:\Users\murad\Documents\Arduino\libraries\RadioHead\RH_RF69.h
 #define NETWORKID     100   
 #define FREQUENCY     433.0 
 
@@ -28,7 +30,7 @@ RH_RF69 rf69(RFM69_CS, RFM69_INT);
 #endif
 
 // Pini pre 2 senzor. tlacidla (Ant/Sat dep) a pre Zhavenie na ant Dep.
-#define ANT_DEP D1 // Vystup, Senzor ci je antena Otvr.
+#define ANT_DEP A0 // Vystup, Senzor ci je antena Otvr.
 #define SAT_DEP D2 // Výstup, Senzor ci je Sat. Von vo vesmíre.
 #define Zhav_DEP D3 // Vstup, Zhavenie na otvr. Anteny
 
@@ -84,22 +86,22 @@ const char* getMorseCodeFor(char c) {
 // Funkcie pre vysielanie Morseovho signálu
 // ------------------------------
 void sendDot() {
-  digitalWrite(LED_BUILTIN, LOW);  // Zapneme LED (aktívna LOW)
+  //digitalWrite(LED_BUILTIN, LOW);  // Zapneme LED (aktívna LOW)
   const char* dot = ".";
   rf69.send((uint8_t*)dot, strlen(dot));
   rf69.waitPacketSent();
   delay(DOT_DURATION);             // Trvanie bodky
-  digitalWrite(LED_BUILTIN, HIGH); // Zhasneme LED
+  //digitalWrite(LED_BUILTIN, HIGH); // Zhasneme LED
   delay(DOT_DURATION);             // Medzivklad  - časova medzera za (.)
 }
 
 void sendDash() {
-  digitalWrite(LED_BUILTIN, LOW);
+  //digitalWrite(LED_BUILTIN, LOW);
   const char* dash = "-";
   rf69.send((uint8_t*)dash, strlen(dash));
   rf69.waitPacketSent();
-  delay(DOT_DURATION * 3);         // Trvanie čiarky (3x dĺžka bodky)
-  digitalWrite(LED_BUILTIN, HIGH);
+  delay(DOT_DURATION * 2);         // Trvanie čiarky (3x dĺžka bodky)
+  //digitalWrite(LED_BUILTIN, HIGH);
   delay(DOT_DURATION);             // Medzivklad - časova medzera za (-)
 }
 
@@ -113,11 +115,16 @@ void sendMorseLetter(char c) {
     if (c == ' ') delay(DOT_DURATION * 7);
     return;
   }
+  
   for (int i = 0; code[i] != '\0'; i++) {
-    if (code[i] == '.')
+    Serial.println(code[i]);
+
+    if (code[i] == '.'){
       sendDot();
-    else if (code[i] == '-')
+      }
+    if (code[i] == '-'){
       sendDash();
+    }
   }
   sendLetterGap();
 }
@@ -125,6 +132,7 @@ void sendMorseLetter(char c) {
 void sendMorseMessage(const char *msg) {
   for (int i = 0; msg[i] != '\0'; i++) {
     sendMorseLetter(msg[i]);
+    
   }
 }
 
@@ -142,8 +150,8 @@ void setup() {
   pinMode(Zhav_DEP, OUTPUT); // pre antenu Otvorenie/Zhavenie
   digitalWrite(Zhav_DEP, LOW); // PulDown mod LOW = 0V
 
-  pinMode(ANT_DEP, INPUT); // Tlacidlo, je ant. otvorena? PulIp
-  pinMode(SAT_DEP, INPUT); // Tlacidlo, je sat. vypustení? PulUp
+  pinMode(ANT_DEP, INPUT_PULLUP); // Tlacidlo, je ant. otvorena? PulIp
+  pinMode(SAT_DEP, INPUT_PULLUP); // Tlacidlo, je sat. vypustení? PulUp
 
   
   // Reset RFM69 
@@ -169,7 +177,7 @@ void setup() {
 }
 
 void loop() {
-
+  //Serial.println("LA:" + String(LockA) + "LB:" + String(LockB));
   if (digitalRead(SAT_DEP) == HIGH) { // Loop code sa spustí po uvolnení tlačidla Sat_Dep, to je keď bude HIGH, lebo PulUp mod
       unsigned long currentTime = millis() - StartTime; // loop time, po SatDep
 
@@ -181,7 +189,7 @@ void loop() {
         Serial.println("Zhav_DEP ON");
       }
 
-      if (digitalRead(ANT_DEP) == HIGH and LockA == false) { // Po otvorení anteny, potvrdenie keď tlacidlo ANT_DEP prejde na HIGH
+      if (analogRead(ANT_DEP) >= 800 and LockA == false) { // Po otvorení anteny, potvrdenie keď tlacidlo ANT_DEP prejde na HIGH
         digitalWrite(Zhav_DEP, LOW);
         LockA = true; // LockA = Aby sa spustila len raz táto funkcia
         StartTime = millis(); // Resetuj StartTime, aby sa vysielať začalo DelayTxStart (sek) po skončení zhavenia, bod 2. Morse Správa
@@ -193,15 +201,17 @@ void loop() {
       if (LockA == true && currentTime > DelayTxStart && LockB == false) {
 
         if (currentTime - DelayTxStart >= NumVys*1000){ // Opakuj každú sekundu
-        Serial.print("Morse: " + String(UvodnaSprava));
+        Serial.print("Morse: " + String(UvodnaSprava) + " , NumVys");
         Serial.print(NumVys + 1);
         Serial.println();
         sendMorseMessage(UvodnaSprava); 
         NumVys++;
         }
-      }else if(NumVys > NumVysMax && LockB == false){
+      }
+      
+      if(NumVys >= NumVysMax && LockB == false){
         LockB = true;
-       }
+      }
       
       // ------------------------------
       // 3. Rádio príjem:
